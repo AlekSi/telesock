@@ -2,6 +2,13 @@
 
 Fast and simple SOCKS5 proxy server.
 
+# Running with Docker
+
+```sh
+docker pull aleksi/telesock
+docker run --restart=always --publish=1080:1080 --mount=type=bind,src=`pwd`/telesock.yaml,dst=/telesock.yaml --name=telesock aleksi/telesock
+```
+
 # License
 
 Written in 2018 by Alexey Palazhchenko.
