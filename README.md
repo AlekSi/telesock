@@ -1,4 +1,5 @@
 # telesock
+![Docker Build Status](https://img.shields.io/docker/build/aleksi/telesock.svg)
 
 Fast and simple SOCKS5 proxy server.
 
