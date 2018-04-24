@@ -10,6 +10,11 @@ docker pull aleksi/telesock
 docker run --restart=always --publish=1080:1080 --mount=type=bind,src=`pwd`/telesock.yaml,dst=/telesock.yaml --name=telesock aleksi/telesock
 ```
 
+# Source Code Locations
+
+* Main: https://github.com/AlekSi/telesock
+* Mirror: https://bitbucket.org/AlekSilver/telesock
+
 # License
 
 Written in 2018 by Alexey Palazhchenko.
