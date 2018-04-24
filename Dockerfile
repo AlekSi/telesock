@@ -7,4 +7,4 @@ RUN cd /go/src/github.com/AlekSi/telesock && env CGO_ENABLED=0 go build -v -o /t
 FROM scratch
 COPY --from=build-env /telesock /telesock
 EXPOSE 1080
-CMD ["/telesock"]
+ENTRYPOINT ["/telesock"]
