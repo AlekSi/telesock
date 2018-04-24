@@ -20,14 +20,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Config represents Telesock configuration.
-type Config struct {
-	Users []struct {
-		Username string
-		Password string
-	}
-}
-
 // TCPConn represents TCP connection between SOCKS5 client and server.
 type TCPConn struct {
 	l    *zap.SugaredLogger

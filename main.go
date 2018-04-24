@@ -13,7 +13,12 @@ import (
 	"context"
 	"io/ioutil"
 	"net"
+	"net/url"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -42,18 +47,29 @@ func runTCPListener(ctx context.Context, addr string, l *zap.SugaredLogger, conf
 		return
 	}
 
+	go func() {
+		<-ctx.Done()
+		tcp.Close()
+		l.Infof("Listener closed.")
+	}()
+
+	var wg sync.WaitGroup
 	l.Infof("Listener started on %s.", tcp.Addr())
 	for {
 		c, err := tcp.Accept()
 		if err != nil {
+			// are we done?
+			if ctx.Err() != nil {
+				break
+			}
+
+			// wait a little before next accept attempt to give OS a chance to free resources
 			l.Error(err)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
 		conn := c.(*net.TCPConn)
-		if err = conn.SetNoDelay(false); err != nil { // TODO do we need this?
-			l.Warn(err)
-		}
 		if err = conn.SetReadBuffer(4096); err != nil {
 			l.Warn(err)
 		}
@@ -61,42 +77,103 @@ func runTCPListener(ctx context.Context, addr string, l *zap.SugaredLogger, conf
 			l.Warn(err)
 		}
 
+		wg.Add(1)
 		go runTCPConn(ctx, conn, l.With(zap.String("client", c.RemoteAddr().String())), conf)
 	}
+
+	wg.Wait()
+}
+
+func loadConfig(path string, l *zap.SugaredLogger, port string) *internal.Config {
+	// read and parse config
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		l.Fatalf("Can't read configuration file: %s.", err)
+	}
+	var config internal.Config
+	if err = yaml.UnmarshalStrict(b, &config); err != nil {
+		l.Fatalf("Can't read configuration: %s.", err)
+	}
+
+	l.Infof("Loaded %d users.", len(config.Users))
+	if config.Server == "" {
+		return &config
+	}
+
+	u := &url.URL{
+		Scheme: "https",
+		Host:   "t.me",
+		Path:   "socks",
+	}
+	for _, user := range config.Users {
+		q := make(url.Values)
+		q.Set("server", config.Server)
+		q.Set("port", port)
+		q.Set("user", user.Username)
+		q.Set("pass", user.Password)
+		u.RawQuery = q.Encode()
+
+		l.Infof("%20s: %s", user.Username, u.String())
+	}
+
+	return &config
 }
 
 func main() {
-	logger, err := zap.NewDevelopment()
+	// parse flags
+	tcpListenF := kingpin.Flag("tcp-listen", "TCP address to listen").Default(":1080").String()
+	configF := kingpin.Flag("config", "Config file name").Default("telesock.yaml").String()
+	verboseF := kingpin.Flag("verbose", "Log INFO level log messages").Bool()
+	debugF := kingpin.Flag("debug", "Log DEBUG level log messages (implies --verbose)").Bool()
+	kingpin.Parse()
+
+	// setup logger
+	loggerConfig := zap.NewDevelopmentConfig()
+	loggerConfig.DisableStacktrace = true
+	logger, err := loggerConfig.Build()
 	if err != nil {
 		panic(err)
 	}
 	l := logger.Sugar()
 	defer l.Sync()
 
-	tcpListenF := kingpin.Flag("tcp-listen", "TCP address to listen").Default(":1080").String()
-	configF := kingpin.Flag("config", "Config file name").Default("telesock.yaml").String()
-	kingpin.Parse()
-
-	b, err := ioutil.ReadFile(*configF)
+	_, port, err := net.SplitHostPort(*tcpListenF)
 	if err != nil {
 		l.Fatal(err)
 	}
 
-	var config internal.Config
-	if err = yaml.UnmarshalStrict(b, &config); err != nil {
-		l.Fatal(err)
+	config := loadConfig(*configF, l, port)
+
+	// set logger level after config is parsed
+	switch {
+	case *debugF:
+		loggerConfig.Level.SetLevel(zap.DebugLevel)
+	case *verboseF:
+		loggerConfig.Level.SetLevel(zap.InfoLevel)
+	default:
+		loggerConfig.Level.SetLevel(zap.WarnLevel)
 	}
-	l.Infof("Loaded %d users.", len(config.Users))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// handle termination signals
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		s := <-signals
+		signal.Stop(signals)
+		l.Warnf("Got %v (%d) signal, shutting down...", s, s)
+		cancel()
+	}()
+
 	var wg sync.WaitGroup
 
+	// start TCP listener
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runTCPListener(ctx, *tcpListenF, l.With(zap.String("component", "tcp")), &config)
+		runTCPListener(ctx, *tcpListenF, l.With(zap.String("component", "tcp")), config)
 	}()
 
 	wg.Wait()

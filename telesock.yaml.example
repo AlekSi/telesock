@@ -1,4 +1,5 @@
 ---
+server: external.server.name.example
 users:
   - username: user1
     password: pass1
